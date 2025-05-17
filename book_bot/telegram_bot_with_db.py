@@ -3,6 +3,7 @@ import logging
 import asyncio
 import sqlite3
 import json
+import redis
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,41 +18,54 @@ logger = logging.getLogger(__name__)
 API_TOKEN = os.getenv("GREEDY_BOOK_TG_TOKEN")
 GIGACHAT_AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))  # Ваш Telegram user_id
-DB_KEYS_FILE = "db_keys.json"
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_DB = int(os.getenv("REDIS_DB", 0))
+TEMP_BOOK_TTL = 3600  # TTL для временных данных книг (1 час в секундах)
 
 # Инициализация бота и роутера
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-# Временное хранилище для данных книг
-TEMP_BOOK_STORAGE = {}
+# Инициализация Redis
+redis_client = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    db=REDIS_DB,
+    decode_responses=True  # Автоматически декодировать строки
+)
 
-# Текущий ключ базы данных и словарь ключей
+# Проверка подключения к Redis
+try:
+    redis_client.ping()
+except redis.ConnectionError as e:
+    logger.error(f"Failed to connect to Redis: {e}")
+    raise
+
+# Текущий ключ базы данных
 CURRENT_DB_KEY = None
-DB_KEYS = {}
 
-# Загрузка ключей из JSON-файла
+# Загрузка ключей из Redis
 def load_db_keys():
-    global DB_KEYS
     try:
-        if os.path.exists(DB_KEYS_FILE):
-            with open(DB_KEYS_FILE, 'r', encoding='utf-8') as f:
-                DB_KEYS = json.load(f)
+        keys_data = redis_client.get("db_keys")
+        return json.loads(keys_data) if keys_data else {}
     except Exception as e:
-        logger.error(f"Error loading DB keys: {e}")
+        logger.error(f"Error loading DB keys from Redis: {e}")
+        return {}
 
-# Сохранение ключей в JSON-файл
-def save_db_keys():
+# Сохранение ключей в Redis
+def save_db_keys(db_keys: dict):
     try:
-        with open(DB_KEYS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(DB_KEYS, f, ensure_ascii=False, indent=2)
+        redis_client.set("db_keys", json.dumps(db_keys, ensure_ascii=False))
     except Exception as e:
-        logger.error(f"Error saving DB keys: {e}")
+        logger.error(f"Error saving DB keys to Redis: {e}")
 
 # Получение пути к текущей БД
 def get_current_db_path() -> str:
-    if CURRENT_DB_KEY and CURRENT_DB_KEY in DB_KEYS:
-        return DB_KEYS[CURRENT_DB_KEY]
+    if CURRENT_DB_KEY:
+        db_keys = load_db_keys()
+        return db_keys.get(CURRENT_DB_KEY)
     return None
 
 # Инициализация базы данных
@@ -183,11 +197,12 @@ async def send_welcome(message: types.Message) -> None:
         await message.reply("Пожалуйста, укажите ключ базы данных. Пример: /start Splunky-Rose4")
         return
     db_key = args[1].strip()
-    if db_key not in DB_KEYS:
+    db_keys = load_db_keys()
+    if db_key not in db_keys:
         await message.reply("Неверный ключ базы данных. Попросите администратора добавить ключ.")
         return
     CURRENT_DB_KEY = db_key
-    db_path = DB_KEYS[db_key]
+    db_path = db_keys[db_key]
     init_db(db_path)
     await message.reply(
         f"Подключено к базе данных с ключом {db_key}. "
@@ -222,8 +237,9 @@ async def add_db_key(message: types.Message) -> None:
     db_key, db_file = args[1].strip(), args[2].strip()
     if not db_file.endswith('.db'):
         db_file += '.db'
-    DB_KEYS[db_key] = db_file
-    save_db_keys()
+    db_keys = load_db_keys()
+    db_keys[db_key] = db_file
+    save_db_keys(db_keys)
     init_db(db_file)  # Инициализируем новую БД
     await message.reply(f"Ключ {db_key} добавлен с файлом БД {db_file}.")
 
@@ -260,9 +276,18 @@ async def handle_photo(message: types.Message) -> None:
     # Парсим данные книги
     book_data = parse_book_data(result)
 
-    # Генерируем уникальный ID для книги и сохраняем данные во временное хранилище
+    # Генерируем уникальный ID для книги и сохраняем данные в Redis
     book_id = str(uuid4())
-    TEMP_BOOK_STORAGE[book_id] = book_data
+    try:
+        redis_client.setex(
+            f"book:{book_id}",
+            TEMP_BOOK_TTL,
+            json.dumps(book_data, ensure_ascii=False)
+        )
+    except Exception as e:
+        logger.error(f"Error saving book data to Redis: {e}")
+        await message.reply("Ошибка при сохранении данных книги.")
+        return
 
     # Отправляем результат пользователю с клавиатурой
     await message.reply(
@@ -286,18 +311,19 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
         # Извлекаем ID книги из callback_data
         book_id = callback.data.split("save_book:")[1]
 
-        # Получаем данные книги из временного хранилища
-        book_data = TEMP_BOOK_STORAGE.get(book_id)
-        if not book_data:
+        # Получаем данные книги из Redis
+        book_data_json = redis_client.get(f"book:{book_id}")
+        if not book_data_json:
             await callback.message.reply("Ошибка: данные книги не найдены.")
             return
+        book_data = json.loads(book_data_json)
 
         # Сохраняем в базу с user_id
         user_id = str(callback.from_user.id)
         if save_book(book_data, user_id):
             await callback.message.reply("Книга успешно сохранена в базе данных!")
-            # Удаляем данные из временного хранилища
-            TEMP_BOOK_STORAGE.pop(book_id, None)
+            # Удаляем данные из Redis
+            redis_client.delete(f"book:{book_id}")
         else:
             await callback.message.reply("Ошибка при сохранении книги.")
     except Exception as e:
@@ -307,10 +333,8 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
 
 # Регистрация роутера в диспетчере и запуск бота
 async def main() -> None:
-    # Загружаем ключи баз данных
-    load_db_keys()
     # Создаем папку для изображений, если не существует
-    os.makedirs("./images", exist_ok=True)
+    os.makedirs("../images", exist_ok=True)
     await dp.start_polling(bot)
 
 if __name__ == '__main__':

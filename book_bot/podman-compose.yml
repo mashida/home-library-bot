@@ -1,0 +1,30 @@
+version: "3"
+services:
+  redis:
+    image: redis:7
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - book-bot-net
+  bot:
+    image: book-bot
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./db:/app/db
+    environment:
+      - GREEDY_BOOK_TG_TOKEN=${GREEDY_BOOK_TG_TOKEN}
+      - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
+      - ADMIN_USER_ID=${ADMIN_USER_ID}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - redis
+    networks:
+      - book-bot-net
+networks:
+  book-bot-net:
+    driver: bridge
