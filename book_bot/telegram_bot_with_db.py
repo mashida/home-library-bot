@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-import sqlite3
+import aiosqlite
 import json
 import redis
 from aiogram import Bot, Dispatcher, types, F
@@ -69,11 +69,11 @@ def get_current_db_path() -> str:
     return None
 
 # Инициализация базы данных
-def init_db(db_path: str):
+async def init_db(db_path: str) -> None:
     try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with aiosqlite.connect(db_path) as conn:
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS books (
                     id TEXT PRIMARY KEY,
                     author TEXT,
@@ -84,47 +84,50 @@ def init_db(db_path: str):
                     user_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
-            conn.commit()
+                """
+            )
+            await conn.commit()
     except Exception as e:
         logger.error(f"Error initializing DB {db_path}: {e}")
 
 # Функция для получения количества книг в базе
-def get_total_books() -> int:
+async def get_total_books() -> int:
     db_path = get_current_db_path()
     if not db_path:
         return 0
     try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM books")
-            total = cursor.fetchone()[0]
-            return total
+        async with aiosqlite.connect(db_path) as conn:
+            cursor = await conn.execute("SELECT COUNT(*) FROM books")
+            row = await cursor.fetchone()
+            await cursor.close()
+            return row[0]
     except Exception as e:
         logger.error(f"Error getting total books: {e}")
         return 0
 
 # Функция для сохранения книги в базу данных
-def save_book(book_data: dict, user_id: str) -> bool:
+async def save_book(book_data: dict, user_id: str) -> bool:
     db_path = get_current_db_path()
     if not db_path:
         return False
     try:
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with aiosqlite.connect(db_path) as conn:
+            await conn.execute(
+                """
                 INSERT INTO books (id, author, title, publication_year, category, publisher, user_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                str(uuid4()),
-                book_data.get('author', ''),
-                book_data.get('title', ''),
-                book_data.get('publication_year', 0),
-                book_data.get('category', ''),
-                book_data.get('publisher', ''),
-                user_id
-            ))
-            conn.commit()
+                """,
+                (
+                    str(uuid4()),
+                    book_data.get('author', ''),
+                    book_data.get('title', ''),
+                    book_data.get('publication_year', 0),
+                    book_data.get('category', ''),
+                    book_data.get('publisher', ''),
+                    user_id,
+                ),
+            )
+            await conn.commit()
             return True
     except Exception as e:
         logger.error(f"Error saving book to database: {e}")
@@ -203,7 +206,7 @@ async def send_welcome(message: types.Message) -> None:
         return
     CURRENT_DB_KEY = db_key
     db_path = db_keys[db_key]
-    init_db(db_path)
+    await init_db(db_path)
     await message.reply(
         f"Подключено к базе данных с ключом {db_key}. "
         "Отправь изображение первой страницы книги, и я пришлю карточку для сохранения."
@@ -215,7 +218,7 @@ async def send_total_books(message: types.Message) -> None:
     if not CURRENT_DB_KEY:
         await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
-    total = get_total_books()
+    total = await get_total_books()
     await message.reply(f"В базе данных сохранено {total} книг.")
 
 # Хэндлер команды /my_id
@@ -240,7 +243,7 @@ async def add_db_key(message: types.Message) -> None:
     db_keys = load_db_keys()
     db_keys[db_key] = db_file
     save_db_keys(db_keys)
-    init_db(db_file)  # Инициализируем новую БД
+    await init_db(db_file)  # Инициализируем новую БД
     await message.reply(f"Ключ {db_key} добавлен с файлом БД {db_file}.")
 
 # Создание инлайн-клавиатуры
@@ -320,7 +323,7 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
 
         # Сохраняем в базу с user_id
         user_id = str(callback.from_user.id)
-        if save_book(book_data, user_id):
+        if await save_book(book_data, user_id):
             await callback.message.reply("Книга успешно сохранена в базе данных!")
             # Удаляем данные из Redis
             redis_client.delete(f"book:{book_id}")
