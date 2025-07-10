@@ -23,6 +23,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 TEMP_BOOK_TTL = 3600  # TTL для временных данных книг (1 час в секундах)
+IMAGES_DIR = Path(__file__).parent / "images"
 
 # Инициализация бота и роутера
 bot = Bot(token=API_TOKEN)
@@ -271,8 +272,9 @@ async def handle_photo(message: types.Message) -> None:
     file_path = file.file_path
 
     # Скачиваем файл
-    image_path = f'./images/{file_id}.jpg'
-    await bot.download_file(file_path, image_path)
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    image_path = IMAGES_DIR / f"{file_id}.jpg"
+    await bot.download_file(file_path, str(image_path))
     image_paths.append(image_path)
 
     # Обрабатываем изображения через GigaChat
@@ -339,7 +341,7 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
 # Регистрация роутера в диспетчере и запуск бота
 async def main() -> None:
     # Создаем папку для изображений, если не существует
-    os.makedirs("../images", exist_ok=True)
+    os.makedirs(IMAGES_DIR, exist_ok=True)
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
