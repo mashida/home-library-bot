@@ -1,3 +1,8 @@
+# В тестах отключены некоторые проверки Pylint
+# pylint: disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+# pylint: disable=redefined-outer-name,too-few-public-methods
+# pylint: disable=import-outside-toplevel,unused-argument
+
 import importlib
 import json
 from pathlib import Path
@@ -119,7 +124,7 @@ def test_get_prompt(bot_module):
 def test_db_keys(bot_module):
     bot_module.save_db_keys({"k": "db.sqlite"})
     assert bot_module.load_db_keys() == {"k": "db.sqlite"}
-    bot_module.CURRENT_DB_KEY = "k"
+    bot_module.state.current_db_key = "k"
     assert bot_module.get_current_db_path() == "db.sqlite"
 
 
@@ -127,7 +132,7 @@ def test_db_keys(bot_module):
 async def test_db_operations(tmp_path, bot_module):
     db = tmp_path / "test.db"
     bot_module.redis_client.set("db_keys", json.dumps({"k": str(db)}))
-    bot_module.CURRENT_DB_KEY = "k"
+    bot_module.state.current_db_key = "k"
     await bot_module.init_db(str(db))
     await bot_module.save_book(
         {
@@ -160,7 +165,7 @@ async def test_send_welcome(monkeypatch, tmp_path, bot_module):
 
 @pytest.mark.asyncio
 async def test_send_total_books(monkeypatch, bot_module):
-    bot_module.CURRENT_DB_KEY = "k"
+    bot_module.state.current_db_key = "k"
     monkeypatch.setattr(bot_module, "get_total_books", AsyncMock(return_value=2))
     msg = FakeMessage("/total")
     await bot_module.send_total_books(msg)
@@ -187,7 +192,7 @@ async def test_handle_photo(monkeypatch, tmp_path, bot_module):
     bot_module.IMAGES_DIR = tmp_path
     db = tmp_path / "db.sqlite"
     bot_module.redis_client.set("db_keys", json.dumps({"k": str(db)}))
-    bot_module.CURRENT_DB_KEY = "k"
+    bot_module.state.current_db_key = "k"
     await bot_module.init_db(str(db))
 
     monkeypatch.setattr(bot_module, "process_images", AsyncMock(return_value=""))
@@ -202,7 +207,7 @@ async def test_handle_photo(monkeypatch, tmp_path, bot_module):
 
 @pytest.mark.asyncio
 async def test_process_save_callback(monkeypatch, bot_module):
-    bot_module.CURRENT_DB_KEY = "k"
+    bot_module.state.current_db_key = "k"
     bot_module.redis_client.set("book:u1", json.dumps({"a": 1}))
     monkeypatch.setattr(bot_module, "save_book", AsyncMock(return_value=True))
     cb = FakeCallback("save_book:u1")
