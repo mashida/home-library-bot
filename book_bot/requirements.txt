@@ -1,3 +1,4 @@
 aiogram==3.13.1
 gigachat==0.1.35
 redis==5.1.1
+aiosqlite==0.19.0
