@@ -6,16 +6,17 @@ import asyncio
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
+from uuid import uuid4
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from gigachat import GigaChat
+from gigachat import GigaChat, exceptions
 import redis
-from uuid import uuid4
 
 # Настройки логирования
 logging.basicConfig(level=logging.INFO)
@@ -24,10 +25,10 @@ logger = logging.getLogger(__name__)
 # Константы
 API_TOKEN: Optional[str] = os.getenv("GREEDY_BOOK_TG_TOKEN")
 GIGACHAT_AUTH_KEY: Optional[str] = os.getenv("GIGACHAT_AUTH_KEY")
-ADMIN_USER_ID: int = int(os.getenv("ADMIN_USER_ID", 0))
+ADMIN_USER_ID: int = int(os.getenv("ADMIN_USER_ID", "0"))
 REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT: int = int(os.getenv("REDIS_PORT", 6379))
-REDIS_DB: int = int(os.getenv("REDIS_DB", 0))
+REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
 TEMP_BOOK_TTL: int = 3600  # TTL хранения временных данных книги (секунды)
 IMAGES_DIR: Path = Path(__file__).parent / "images"
 
@@ -46,12 +47,19 @@ redis_client: redis.Redis = redis.Redis(
 # Проверка подключения к Redis
 try:
     redis_client.ping()
-except redis.ConnectionError as e:
-    logger.error(f"Failed to connect to Redis: {e}")
+except redis.ConnectionError as err:
+    logger.error("Failed to connect to Redis: %s", err)
     raise
 
-# Текущий ключ базы данных
-CURRENT_DB_KEY: Optional[str] = None
+# Хранилище состояния бота
+@dataclass
+class BotState:
+    """Состояние работы бота."""
+
+    current_db_key: Optional[str] = None
+
+
+state = BotState()
 
 # Загрузка ключей из Redis
 def load_db_keys() -> Dict[str, str]:
@@ -64,8 +72,8 @@ def load_db_keys() -> Dict[str, str]:
     try:
         keys_data = redis_client.get("db_keys")
         return json.loads(keys_data) if keys_data else {}
-    except Exception as e:
-        logger.error(f"Error loading DB keys from Redis: {e}")
+    except (redis.RedisError, json.JSONDecodeError) as err:
+        logger.error("Error loading DB keys from Redis: %s", err)
         return {}
 
 # Сохранение ключей в Redis
@@ -78,8 +86,8 @@ def save_db_keys(db_keys: Dict[str, str]) -> None:
 
     try:
         redis_client.set("db_keys", json.dumps(db_keys, ensure_ascii=False))
-    except Exception as e:
-        logger.error(f"Error saving DB keys to Redis: {e}")
+    except redis.RedisError as err:
+        logger.error("Error saving DB keys to Redis: %s", err)
 
 # Получение пути к текущей БД
 def get_current_db_path() -> Optional[str]:
@@ -89,9 +97,9 @@ def get_current_db_path() -> Optional[str]:
         Optional[str]: Путь к файлу базы данных или ``None``.
     """
 
-    if CURRENT_DB_KEY:
+    if state.current_db_key:
         db_keys = load_db_keys()
-        return db_keys.get(CURRENT_DB_KEY)
+        return db_keys.get(state.current_db_key)
     return None
 
 # Инициализация базы данных
@@ -119,8 +127,8 @@ async def init_db(db_path: str) -> None:
                 """
             )
             await conn.commit()
-    except Exception as e:
-        logger.error(f"Error initializing DB {db_path}: {e}")
+    except aiosqlite.Error as err:
+        logger.error("Error initializing DB %s: %s", db_path, err)
 
 # Функция для получения количества книг в базе
 async def get_total_books() -> int:
@@ -139,8 +147,8 @@ async def get_total_books() -> int:
             row = await cursor.fetchone()
             await cursor.close()
             return row[0]
-    except Exception as e:
-        logger.error(f"Error getting total books: {e}")
+    except aiosqlite.Error as err:
+        logger.error("Error getting total books: %s", err)
         return 0
 
 # Функция для сохранения книги в базу данных
@@ -162,23 +170,31 @@ async def save_book(book_data: Dict[str, Any], user_id: str) -> bool:
         async with aiosqlite.connect(db_path) as conn:
             await conn.execute(
                 """
-                INSERT INTO books (id, author, title, publication_year, category, publisher, user_id)
+                INSERT INTO books (
+                    id,
+                    author,
+                    title,
+                    publication_year,
+                    category,
+                    publisher,
+                    user_id
+                )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid4()),
-                    book_data.get('author', ''),
-                    book_data.get('title', ''),
-                    book_data.get('publication_year', 0),
-                    book_data.get('category', ''),
-                    book_data.get('publisher', ''),
+                    book_data.get("author", ""),
+                    book_data.get("title", ""),
+                    book_data.get("publication_year", 0),
+                    book_data.get("category", ""),
+                    book_data.get("publisher", ""),
                     user_id,
                 ),
             )
             await conn.commit()
             return True
-    except Exception as e:
-        logger.error(f"Error saving book to database: {e}")
+    except aiosqlite.Error as err:
+        logger.error("Error saving book to database: %s", err)
         return False
 
 # Парсинг ответа GigaChat в словарь
@@ -252,8 +268,8 @@ async def process_images(image_paths: Iterable[Path]) -> str:
             # Отправляем запрос модели и получаем ответ
             result = giga.chat(request)
             return result.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Error processing images: {e}")
+    except (exceptions.GigaChatException, OSError) as err:
+        logger.error("Error processing images: %s", err)
         return "Произошла ошибка при обработке изображений."
 
 # Хэндлер команды /start
@@ -264,7 +280,6 @@ async def send_welcome(message: types.Message) -> None:
     Args:
         message: Сообщение пользователя с ключом базы.
     """
-    global CURRENT_DB_KEY
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.reply("Пожалуйста, укажите ключ базы данных. Пример: /start Splunky-Rose4")
@@ -274,7 +289,7 @@ async def send_welcome(message: types.Message) -> None:
     if db_key not in db_keys:
         await message.reply("Неверный ключ базы данных. Попросите администратора добавить ключ.")
         return
-    CURRENT_DB_KEY = db_key
+    state.current_db_key = db_key
     db_path = db_keys[db_key]
     await init_db(db_path)
     await message.reply(
@@ -290,7 +305,7 @@ async def send_total_books(message: types.Message) -> None:
     Args:
         message: Сообщение пользователя с командой ``/total``.
     """
-    if not CURRENT_DB_KEY:
+    if not state.current_db_key:
         await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
     total = await get_total_books()
@@ -320,7 +335,9 @@ async def add_db_key(message: types.Message) -> None:
         return
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.reply("Укажите ключ и имя файла БД. Пример: /add_key Splunky-Rose4 books_splunky.db")
+        await message.reply(
+            "Укажите ключ и имя файла БД. Пример: /add_key Splunky-Rose4 books_splunky.db"
+        )
         return
     db_key, db_file = args[1].strip(), args[2].strip()
     if not db_file.endswith('.db'):
@@ -357,7 +374,7 @@ async def handle_photo(message: types.Message) -> None:
     Args:
         message: Сообщение с фотографией страницы книги.
     """
-    if not CURRENT_DB_KEY:
+    if not state.current_db_key:
         await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
     # Скачиваем изображения
@@ -385,10 +402,10 @@ async def handle_photo(message: types.Message) -> None:
         redis_client.setex(
             f"book:{book_id}",
             TEMP_BOOK_TTL,
-            json.dumps(book_data, ensure_ascii=False)
+            json.dumps(book_data, ensure_ascii=False),
         )
-    except Exception as e:
-        logger.error(f"Error saving book data to Redis: {e}")
+    except redis.RedisError as err:
+        logger.error("Error saving book data to Redis: %s", err)
         await message.reply("Ошибка при сохранении данных книги.")
         return
 
@@ -412,7 +429,7 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
     Args:
         callback: Объект callback от Telegram.
     """
-    if not CURRENT_DB_KEY:
+    if not state.current_db_key:
         await callback.message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
     try:
@@ -434,8 +451,8 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
             redis_client.delete(f"book:{book_id}")
         else:
             await callback.message.reply("Ошибка при сохранении книги.")
-    except Exception as e:
-        logger.error(f"Error processing save callback: {e}")
+    except (redis.RedisError, json.JSONDecodeError, aiosqlite.Error) as err:
+        logger.error("Error processing save callback: %s", err)
         await callback.message.reply("Произошла ошибка при сохранении.")
     await callback.answer()
 
