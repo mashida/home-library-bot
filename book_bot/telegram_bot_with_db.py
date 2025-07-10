@@ -1,14 +1,20 @@
-import os
-import logging
+"""Telegram-бот для сохранения распознанных данных книг в SQLite."""
+
+from __future__ import annotations
+
 import asyncio
-import aiosqlite
 import json
-import redis
+import logging
+import os
 from pathlib import Path
-from aiogram import Bot, Dispatcher, types, F
+from typing import Any, Dict, Iterable, List, Optional
+
+import aiosqlite
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from gigachat import GigaChat
+import redis
 from uuid import uuid4
 
 # Настройки логирования
@@ -16,21 +22,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Константы
-API_TOKEN = os.getenv("GREEDY_BOOK_TG_TOKEN")
-GIGACHAT_AUTH_KEY = os.getenv("GIGACHAT_AUTH_KEY")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))  # Ваш Telegram user_id
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-REDIS_DB = int(os.getenv("REDIS_DB", 0))
-TEMP_BOOK_TTL = 3600  # TTL для временных данных книг (1 час в секундах)
-IMAGES_DIR = Path(__file__).parent / "images"
+API_TOKEN: Optional[str] = os.getenv("GREEDY_BOOK_TG_TOKEN")
+GIGACHAT_AUTH_KEY: Optional[str] = os.getenv("GIGACHAT_AUTH_KEY")
+ADMIN_USER_ID: int = int(os.getenv("ADMIN_USER_ID", 0))
+REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT: int = int(os.getenv("REDIS_PORT", 6379))
+REDIS_DB: int = int(os.getenv("REDIS_DB", 0))
+TEMP_BOOK_TTL: int = 3600  # TTL хранения временных данных книги (секунды)
+IMAGES_DIR: Path = Path(__file__).parent / "images"
 
 # Инициализация бота и роутера
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+bot: Bot = Bot(token=API_TOKEN)
+dp: Dispatcher = Dispatcher()
 
 # Инициализация Redis
-redis_client = redis.Redis(
+redis_client: redis.Redis = redis.Redis(
     host=REDIS_HOST,
     port=REDIS_PORT,
     db=REDIS_DB,
@@ -45,10 +51,16 @@ except redis.ConnectionError as e:
     raise
 
 # Текущий ключ базы данных
-CURRENT_DB_KEY = None
+CURRENT_DB_KEY: Optional[str] = None
 
 # Загрузка ключей из Redis
-def load_db_keys():
+def load_db_keys() -> Dict[str, str]:
+    """Загрузить из Redis карту ключей баз данных.
+
+    Returns:
+        Dict[str, str]: Словарь вида ``ключ`` -> ``путь к файлу БД``.
+    """
+
     try:
         keys_data = redis_client.get("db_keys")
         return json.loads(keys_data) if keys_data else {}
@@ -57,14 +69,26 @@ def load_db_keys():
         return {}
 
 # Сохранение ключей в Redis
-def save_db_keys(db_keys: dict):
+def save_db_keys(db_keys: Dict[str, str]) -> None:
+    """Сохранить карту ключей баз данных в Redis.
+
+    Args:
+        db_keys: Словарь вида ``ключ`` -> ``путь к файлу БД``.
+    """
+
     try:
         redis_client.set("db_keys", json.dumps(db_keys, ensure_ascii=False))
     except Exception as e:
         logger.error(f"Error saving DB keys to Redis: {e}")
 
 # Получение пути к текущей БД
-def get_current_db_path() -> str:
+def get_current_db_path() -> Optional[str]:
+    """Получить путь к выбранной базе данных, если он есть.
+
+    Returns:
+        Optional[str]: Путь к файлу базы данных или ``None``.
+    """
+
     if CURRENT_DB_KEY:
         db_keys = load_db_keys()
         return db_keys.get(CURRENT_DB_KEY)
@@ -72,6 +96,12 @@ def get_current_db_path() -> str:
 
 # Инициализация базы данных
 async def init_db(db_path: str) -> None:
+    """Создать таблицу книг, если её ещё нет.
+
+    Args:
+        db_path: Путь к файлу базы данных.
+    """
+
     try:
         async with aiosqlite.connect(db_path) as conn:
             await conn.execute(
@@ -94,6 +124,12 @@ async def init_db(db_path: str) -> None:
 
 # Функция для получения количества книг в базе
 async def get_total_books() -> int:
+    """Получить количество книг в текущей базе данных.
+
+    Returns:
+        int: Число записей в таблице ``books``.
+    """
+
     db_path = get_current_db_path()
     if not db_path:
         return 0
@@ -108,7 +144,17 @@ async def get_total_books() -> int:
         return 0
 
 # Функция для сохранения книги в базу данных
-async def save_book(book_data: dict, user_id: str) -> bool:
+async def save_book(book_data: Dict[str, Any], user_id: str) -> bool:
+    """Сохранить книгу в текущей базе данных.
+
+    Args:
+        book_data: Словарь с данными книги.
+        user_id: Идентификатор пользователя Telegram.
+
+    Returns:
+        bool: ``True`` при успешном сохранении, иначе ``False``.
+    """
+
     db_path = get_current_db_path()
     if not db_path:
         return False
@@ -136,8 +182,17 @@ async def save_book(book_data: dict, user_id: str) -> bool:
         return False
 
 # Парсинг ответа GigaChat в словарь
-def parse_book_data(text: str) -> dict:
-    book_data = {}
+def parse_book_data(text: str) -> Dict[str, Any]:
+    """Преобразовать ответ GigaChat в словарь с данными книги.
+
+    Args:
+        text: Текстовый ответ модели.
+
+    Returns:
+        Dict[str, Any]: Извлечённые поля книги.
+    """
+
+    book_data: Dict[str, Any] = {}
     lines = text.strip().split('\n')
     for line in lines:
         if ': ' in line:
@@ -155,16 +210,23 @@ def parse_book_data(text: str) -> dict:
     return book_data
 
 def get_prompt() -> str:
-    """
-    Function to prompt from prompt.txt
-    :return: prompt as string
-    """
+    """Получить текст подсказки для обработки изображений."""
+
     prompt_path = Path(__file__).parent / "prompt.txt"
     with open(prompt_path, 'r', encoding='utf-8') as file:
         return file.read()
 
 # Функция для обработки изображений через GigaChat
-async def process_images(image_paths: list) -> str:
+async def process_images(image_paths: Iterable[Path]) -> str:
+    """Отправить изображения в GigaChat и вернуть ответ модели.
+
+    Args:
+        image_paths: Итерация путей к файлам изображений.
+
+    Returns:
+        str: Текстовый ответ GigaChat.
+    """
+
     try:
         with GigaChat(credentials=GIGACHAT_AUTH_KEY, verify_ssl_certs=False) as giga:
             # Загрузка всех изображений и получение их ID
@@ -197,6 +259,11 @@ async def process_images(image_paths: list) -> str:
 # Хэндлер команды /start
 @dp.message(Command(commands=["start"]))
 async def send_welcome(message: types.Message) -> None:
+    """Обработать команду ``/start`` и выбрать базу данных.
+
+    Args:
+        message: Сообщение пользователя с ключом базы.
+    """
     global CURRENT_DB_KEY
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -218,6 +285,11 @@ async def send_welcome(message: types.Message) -> None:
 # Хэндлер команды /total
 @dp.message(Command(commands=["total"]))
 async def send_total_books(message: types.Message) -> None:
+    """Ответить количеством книг в базе данных.
+
+    Args:
+        message: Сообщение пользователя с командой ``/total``.
+    """
     if not CURRENT_DB_KEY:
         await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
@@ -227,12 +299,22 @@ async def send_total_books(message: types.Message) -> None:
 # Хэндлер команды /my_id
 @dp.message(Command(commands=["my_id"]))
 async def send_user_id(message: types.Message) -> None:
+    """Отправить пользователю его идентификатор Telegram.
+
+    Args:
+        message: Исходное сообщение пользователя.
+    """
     user_id = message.from_user.id
     await message.reply(f"Ваш Telegram user_id: {user_id}")
 
 # Хэндлер команды /add_key (только для админа)
 @dp.message(Command(commands=["add_key"]))
 async def add_db_key(message: types.Message) -> None:
+    """Добавить новый ключ базы данных (только для администратора).
+
+    Args:
+        message: Сообщение с командой ``/add_key``.
+    """
     if message.from_user.id != ADMIN_USER_ID:
         await message.reply("Эта команда доступна только администратору.")
         return
@@ -251,6 +333,15 @@ async def add_db_key(message: types.Message) -> None:
 
 # Создание инлайн-клавиатуры
 def get_save_keyboard(book_id: str) -> InlineKeyboardMarkup:
+    """Создать инлайн-клавиатуру для сохранения книги.
+
+    Args:
+        book_id: Идентификатор книги в Redis.
+
+    Returns:
+        InlineKeyboardMarkup: Клавиатура с кнопкой сохранения.
+    """
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Сохранить", callback_data=f"save_book:{book_id}")
@@ -261,6 +352,11 @@ def get_save_keyboard(book_id: str) -> InlineKeyboardMarkup:
 # Хэндлер для получения изображений
 @dp.message(F.photo)
 async def handle_photo(message: types.Message) -> None:
+    """Обработать фото, распознать книгу и сохранить данные в Redis.
+
+    Args:
+        message: Сообщение с фотографией страницы книги.
+    """
     if not CURRENT_DB_KEY:
         await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
@@ -311,6 +407,11 @@ async def handle_photo(message: types.Message) -> None:
 # Хэндлер для обработки callback'ов от инлайн-кнопки
 @dp.callback_query(F.data.startswith("save_book:"))
 async def process_save_callback(callback: types.CallbackQuery) -> None:
+    """Сохранить книгу в БД по нажатию инлайн-кнопки.
+
+    Args:
+        callback: Объект callback от Telegram.
+    """
     if not CURRENT_DB_KEY:
         await callback.message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
         return
@@ -340,6 +441,8 @@ async def process_save_callback(callback: types.CallbackQuery) -> None:
 
 # Регистрация роутера в диспетчере и запуск бота
 async def main() -> None:
+    """Запустить бота."""
+
     # Создаем папку для изображений, если не существует
     os.makedirs(IMAGES_DIR, exist_ok=True)
     await dp.start_polling(bot)
