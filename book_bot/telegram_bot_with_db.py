@@ -4,6 +4,7 @@ import asyncio
 import aiosqlite
 import json
 import redis
+from pathlib import Path
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -157,7 +158,8 @@ def get_prompt() -> str:
     Function to prompt from prompt.txt
     :return: prompt as string
     """
-    with open('prompt.txt', 'r', encoding='utf-8') as file:
+    prompt_path = Path(__file__).parent / "prompt.txt"
+    with open(prompt_path, 'r', encoding='utf-8') as file:
         return file.read()
 
 # Функция для обработки изображений через GigaChat
