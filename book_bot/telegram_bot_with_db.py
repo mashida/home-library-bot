@@ -151,6 +151,130 @@ async def get_total_books() -> int:
         logger.error("Error getting total books: %s", err)
         return 0
 
+# Дополнительные функции выборки данных из БД
+async def get_books_by_author(author: str) -> list[dict[str, Any]]:
+    """Получить книги, соответствующие автору.
+
+    Args:
+        author: Имя автора для поиска.
+
+    Returns:
+        list[dict[str, Any]]: Список словарей с найденными книгами.
+    """
+
+    db_path = get_current_db_path()
+    if not db_path:
+        return []
+    try:
+        async with aiosqlite.connect(db_path) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT author, title, publication_year, category, publisher, user_id, created_at
+                FROM books
+                WHERE author LIKE ?
+                """,
+                (f"%{author}%",),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+    except aiosqlite.Error as err:
+        logger.error("Error getting books by author: %s", err)
+        return []
+
+    columns = [
+        "author",
+        "title",
+        "publication_year",
+        "category",
+        "publisher",
+        "user_id",
+        "created_at",
+    ]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+async def get_books_by_year(year: int) -> list[dict[str, Any]]:
+    """Получить книги по году издания.
+
+    Args:
+        year: Год издания для поиска.
+
+    Returns:
+        list[dict[str, Any]]: Список найденных книг.
+    """
+
+    db_path = get_current_db_path()
+    if not db_path:
+        return []
+    try:
+        async with aiosqlite.connect(db_path) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT author, title, publication_year, category, publisher, user_id, created_at
+                FROM books
+                WHERE publication_year = ?
+                """,
+                (year,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+    except aiosqlite.Error as err:
+        logger.error("Error getting books by year: %s", err)
+        return []
+
+    columns = [
+        "author",
+        "title",
+        "publication_year",
+        "category",
+        "publisher",
+        "user_id",
+        "created_at",
+    ]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+async def get_last_books(limit: int) -> list[dict[str, Any]]:
+    """Получить последние книги из базы.
+
+    Args:
+        limit: Количество записей для выборки.
+
+    Returns:
+        list[dict[str, Any]]: Список последних книг.
+    """
+
+    db_path = get_current_db_path()
+    if not db_path:
+        return []
+    try:
+        async with aiosqlite.connect(db_path) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT author, title, publication_year, category, publisher, user_id, created_at
+                FROM books
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = await cursor.fetchall()
+            await cursor.close()
+    except aiosqlite.Error as err:
+        logger.error("Error getting last books: %s", err)
+        return []
+
+    columns = [
+        "author",
+        "title",
+        "publication_year",
+        "category",
+        "publisher",
+        "user_id",
+        "created_at",
+    ]
+    return [dict(zip(columns, row)) for row in rows]
+
 # Функция для сохранения книги в базу данных
 async def save_book(book_data: Dict[str, Any], user_id: str) -> bool:
     """Сохранить книгу в текущей базе данных.
@@ -347,6 +471,115 @@ async def add_db_key(message: types.Message) -> None:
     save_db_keys(db_keys)
     await init_db(db_file)  # Инициализируем новую БД
     await message.reply(f"Ключ {db_key} добавлен с файлом БД {db_file}.")
+
+# Хэндлер поиска книг по автору
+@dp.message(Command(commands=["find_author"]))
+async def find_books_by_author(message: types.Message) -> None:
+    """Найти книги по имени автора.
+
+    Args:
+        message: Сообщение с командой ``/find_author``.
+    """
+
+    if not state.current_db_key:
+        await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply("Укажите имя автора. Пример: /find_author Булгаков")
+        return
+    books = await get_books_by_author(args[1].strip())
+    if not books:
+        await message.reply("Ничего не найдено.")
+        return
+    lines = []
+    for book in books:
+        lines.append(
+            "\n".join(
+                [
+                    f"Автор: {book['author']}",
+                    f"Название: {book['title']}",
+                    f"Год издания: {book['publication_year']}",
+                    f"Категория: {book['category']}",
+                    f"Издательство: {book['publisher']}",
+                ]
+            )
+        )
+    await message.reply("\n\n".join(lines))
+
+
+# Хэндлер поиска книг по году
+@dp.message(Command(commands=["find_year"]))
+async def find_books_by_year(message: types.Message) -> None:
+    """Найти книги по году издания.
+
+    Args:
+        message: Сообщение с командой ``/find_year``.
+    """
+
+    if not state.current_db_key:
+        await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].isdigit():
+        await message.reply("Укажите год издания. Пример: /find_year 2020")
+        return
+    year = int(args[1])
+    books = await get_books_by_year(year)
+    if not books:
+        await message.reply("Ничего не найдено.")
+        return
+    lines = []
+    for book in books:
+        lines.append(
+            "\n".join(
+                [
+                    f"Автор: {book['author']}",
+                    f"Название: {book['title']}",
+                    f"Год издания: {book['publication_year']}",
+                    f"Категория: {book['category']}",
+                    f"Издательство: {book['publisher']}",
+                ]
+            )
+        )
+    await message.reply("\n\n".join(lines))
+
+
+# Хэндлер вывода последних записей
+@dp.message(Command(commands=["last"]))
+async def send_last_books(message: types.Message) -> None:
+    """Показать последние сохранённые книги.
+
+    Args:
+        message: Сообщение с командой ``/last``.
+    """
+
+    if not state.current_db_key:
+        await message.reply("Сначала подключитесь к базе данных с помощью /start <ключ>.")
+        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2 or not args[1].isdigit():
+        await message.reply("Укажите число записей. Пример: /last 5")
+        return
+    limit = int(args[1])
+    books = await get_last_books(limit)
+    if not books:
+        await message.reply("Ничего не найдено.")
+        return
+    lines = []
+    for book in books:
+        lines.append(
+            "\n".join(
+                [
+                    f"Автор: {book['author']}",
+                    f"Название: {book['title']}",
+                    f"Год издания: {book['publication_year']}",
+                    f"Категория: {book['category']}",
+                    f"Издательство: {book['publisher']}",
+                ]
+            )
+        )
+    await message.reply("\n\n".join(lines))
 
 # Создание инлайн-клавиатуры
 def get_save_keyboard(book_id: str) -> InlineKeyboardMarkup:

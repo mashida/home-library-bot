@@ -4,6 +4,7 @@
 # pylint: disable=import-outside-toplevel,unused-argument
 
 import importlib
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -148,6 +149,42 @@ async def test_db_operations(tmp_path, bot_module):
     assert total == 1
 
 
+@pytest.mark.asyncio
+async def test_search_helpers(tmp_path, bot_module):
+    db = tmp_path / "test.db"
+    bot_module.redis_client.set("db_keys", json.dumps({"k": str(db)}))
+    bot_module.state.current_db_key = "k"
+    await bot_module.init_db(str(db))
+    await bot_module.save_book(
+        {
+            "author": "A",
+            "title": "B",
+            "publication_year": 2020,
+            "category": "C",
+            "publisher": "P",
+        },
+        "1",
+    )
+    await asyncio.sleep(1.1)
+    await bot_module.save_book(
+        {
+            "author": "X",
+            "title": "Y",
+            "publication_year": 2021,
+            "category": "C",
+            "publisher": "P",
+        },
+        "2",
+    )
+
+    by_author = await bot_module.get_books_by_author("A")
+    assert len(by_author) == 1
+    by_year = await bot_module.get_books_by_year(2021)
+    assert len(by_year) == 1
+    last = await bot_module.get_last_books(1)
+    assert last[0]["title"] == "Y"
+
+
 def test_get_save_keyboard(bot_module):
     kb = bot_module.get_save_keyboard("bid")
     assert isinstance(kb, bot_module.InlineKeyboardMarkup)
@@ -185,6 +222,75 @@ async def test_add_db_key(monkeypatch, tmp_path, bot_module):
     msg = FakeMessage("/add_key newkey file.db", user_id=1)
     await bot_module.add_db_key(msg)
     assert bot_module.load_db_keys()["newkey"] == "file.db"
+
+
+@pytest.mark.asyncio
+async def test_find_books_by_author_handler(monkeypatch, bot_module):
+    bot_module.state.current_db_key = "k"
+    monkeypatch.setattr(
+        bot_module,
+        "get_books_by_author",
+        AsyncMock(
+            return_value=[
+                {
+                    "author": "A",
+                    "title": "B",
+                    "publication_year": 2020,
+                    "category": "C",
+                    "publisher": "P",
+                }
+            ],
+        ),
+    )
+    msg = FakeMessage("/find_author A")
+    await bot_module.find_books_by_author(msg)
+    assert "A" in msg.replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_find_books_by_year_handler(monkeypatch, bot_module):
+    bot_module.state.current_db_key = "k"
+    monkeypatch.setattr(
+        bot_module,
+        "get_books_by_year",
+        AsyncMock(
+            return_value=[
+                {
+                    "author": "A",
+                    "title": "B",
+                    "publication_year": 2020,
+                    "category": "C",
+                    "publisher": "P",
+                }
+            ],
+        ),
+    )
+    msg = FakeMessage("/find_year 2020")
+    await bot_module.find_books_by_year(msg)
+    assert "2020" in msg.replies[0][0]
+
+
+@pytest.mark.asyncio
+async def test_send_last_books_handler(monkeypatch, bot_module):
+    bot_module.state.current_db_key = "k"
+    monkeypatch.setattr(
+        bot_module,
+        "get_last_books",
+        AsyncMock(
+            return_value=[
+                {
+                    "author": "A",
+                    "title": "B",
+                    "publication_year": 2020,
+                    "category": "C",
+                    "publisher": "P",
+                }
+            ],
+        ),
+    )
+    msg = FakeMessage("/last 1")
+    await bot_module.send_last_books(msg)
+    assert "B" in msg.replies[0][0]
 
 
 @pytest.mark.asyncio
