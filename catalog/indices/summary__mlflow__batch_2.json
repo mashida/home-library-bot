@@ -1,0 +1,10 @@
+{
+  "topic": "mlflow",
+  "batch": 2,
+  "counts": {
+    "PERSON": 10,
+    "COMPANY": 5,
+    "TOOL": 15,
+    "SOURCE": 5
+  }
+}
