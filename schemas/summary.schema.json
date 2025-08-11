@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["topic", "batch", "counts"],
+  "properties": {
+    "topic": {"type": "string"},
+    "batch": {"type": "integer"},
+    "counts": {
+      "type": "object",
+      "required": ["PERSON", "COMPANY", "TOOL", "SOURCE"],
+      "properties": {
+        "PERSON": {"type": "integer"},
+        "COMPANY": {"type": "integer"},
+        "TOOL": {"type": "integer"},
+        "SOURCE": {"type": "integer"}
+      }
+    }
+  }
+}

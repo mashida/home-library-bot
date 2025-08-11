@@ -1,0 +1,13 @@
+batch_1:
+  topics:
+    - python-core
+    - fastapi
+    - numpy
+    - pytorch
+    - huggingface
+    - mlflow
+  entity_types:
+    - PERSON
+    - COMPANY
+    - TOOL
+    - SOURCE
