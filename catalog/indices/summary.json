@@ -1,46 +1,46 @@
 {
   "topics": {
     "fastapi": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     },
     "huggingface": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     },
     "mlflow": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     },
     "numpy": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     },
     "python-core": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     },
     "pytorch": {
-      "PERSON": 3,
-      "COMPANY": 2,
-      "TOOL": 3,
-      "SOURCE": 2
+      "PERSON": 13,
+      "COMPANY": 7,
+      "TOOL": 18,
+      "SOURCE": 7
     }
   },
   "total": {
-    "PERSON": 18,
-    "COMPANY": 12,
-    "TOOL": 18,
-    "SOURCE": 12
+    "PERSON": 78,
+    "COMPANY": 42,
+    "TOOL": 108,
+    "SOURCE": 42
   }
 }
