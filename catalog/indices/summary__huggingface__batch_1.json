@@ -1,0 +1,10 @@
+{
+  "topic": "huggingface",
+  "batch": 1,
+  "counts": {
+    "PERSON": 3,
+    "COMPANY": 2,
+    "TOOL": 3,
+    "SOURCE": 2
+  }
+}
